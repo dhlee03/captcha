@@ -131,6 +131,25 @@ def tokenize_projection(image, step=3):
 
     return segments
 
+def divide_large_segment(segments, captcha_text):
+    while len(segments) < len(captcha_text):
+        # cannot divide none
+        if len(segments) == 0:
+            break
+        # splits biggest contours
+        idx = np.argmax(segments[:, 2])
+        biggest_seg = segments[idx]
+        # cannot split
+        if biggest_seg[0] == 0:
+            break
+         # not always exactly half, can improve this part
+
+        half_width = biggest_seg[2] // 2
+        first_seg = np.array([biggest_seg[0], biggest_seg[1], half_width, biggest_seg[3]])
+        second_seg = np.array([biggest_seg[0] + half_width, biggest_seg[1], biggest_seg[2] - half_width, biggest_seg[3]])
+        segments = np.concatenate((segments[:idx], [first_seg, second_seg], segments[idx + 1:]))
+    return segments
+
 def process_image(file_path, file_name, charcount, tokenizor, output_dir):
     colored_img = cv2.imread(file_path)
     # Load the captcha image in grayscale
@@ -192,13 +211,17 @@ def process_image(file_path, file_name, charcount, tokenizor, output_dir):
                     if len(captcha_text) == len(filtered_contours):
                         break
 
+    filtered_contours = np.array([[x, y, w, h] for _, x, y, w, h in filtered_contours])
+    if len(captcha_text) != len(filtered_contours):
+        filtered_contours = divide_large_segment(filtered_contours, captcha_text)
+
     if len(captcha_text) != len(filtered_contours):
         # plt.imshow(dilated_img, cmap="gray")
         # plt.show()
         # print(f"Skipping {file_name} due to length mismatch: {len(captcha_text)} != {len(filtered_contours)}")
         return
     
-    for i, (contour, x, y, w, h) in enumerate(filtered_contours):
+    for i, (x, y, w, h) in enumerate(filtered_contours):
         # Crop and resize each character
         char_img = processed_img[y:y+h, x:x+w]
         char_img = cv2.resize(char_img, (224, 224))  # Resize to a fixed size
