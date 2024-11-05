@@ -8,6 +8,10 @@ import shutil
 # Paths for input and output directories
 input_dir = "train"
 output_dir = "processed"
+global fail
+global total
+fail = 0
+total = 0
 
 # Ensure output directory exists
 if not os.path.exists(output_dir):
@@ -139,18 +143,33 @@ def divide_large_segment(segments, captcha_text):
         # splits biggest contours
         idx = np.argmax(segments[:, 2])
         biggest_seg = segments[idx]
+        max_width = biggest_seg[2]
+
+        widths = np.delete(segments[:,2],idx)
+        if len(widths) > 0:
+                base_width = np.min(widths)
+        else:
+            base_width = max_width / (len(captcha_text) - len(segments) + 1)
+        ratio = max(2, int(round(max_width/base_width)))
+        ratio = min(ratio, len(captcha_text) - len(segments) + 1)
         # cannot split
         if biggest_seg[0] == 0:
             break
-         # not always exactly half, can improve this part
+        if ratio == 1:
+            break
 
-        half_width = biggest_seg[2] // 2
-        first_seg = np.array([biggest_seg[0], biggest_seg[1], half_width, biggest_seg[3]])
-        second_seg = np.array([biggest_seg[0] + half_width, biggest_seg[1], biggest_seg[2] - half_width, biggest_seg[3]])
-        segments = np.concatenate((segments[:idx], [first_seg, second_seg], segments[idx + 1:]))
+        splits = np.full(ratio, max_width // ratio)
+        splits[:max_width % ratio] += 1
+        new_segments = []
+        x = biggest_seg[0]
+        for s in splits:
+            new_segments.append([x, biggest_seg[1], s, biggest_seg[3]])
+            x += s  
+        segments = np.concatenate((segments[:idx], new_segments, segments[idx + 1:]))
     return segments
 
 def process_image(file_path, file_name, charcount, tokenizor, output_dir):
+    global total, fail
     colored_img = cv2.imread(file_path)
     # Load the captcha image in grayscale
     img = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
@@ -197,6 +216,8 @@ def process_image(file_path, file_name, charcount, tokenizor, output_dir):
 
     dilation_steps = range(5)
 
+    total += 1
+
     if len(captcha_text) != len(filtered_contours):
         # Apply dilation to connect nearby parts of letters
         for i in dilation_steps:
@@ -216,6 +237,7 @@ def process_image(file_path, file_name, charcount, tokenizor, output_dir):
         filtered_contours = divide_large_segment(filtered_contours, captcha_text)
 
     if len(captcha_text) != len(filtered_contours):
+        fail += 1
         # plt.imshow(dilated_img, cmap="gray")
         # plt.show()
         # print(f"Skipping {file_name} due to length mismatch: {len(captcha_text)} != {len(filtered_contours)}")
@@ -266,6 +288,7 @@ if __name__ == "__main__":
         if filename.endswith(".png"):
             process_image(os.path.join(input_dir, filename), filename, charcount, tokenizer, output_dir)
 
-    print(len(os.listdir(output_dir)) / charcount['total'])
-
+    print(f"Number of failed cases:{fail}")
+    percentage = fail / total
+    print(f"Fail rate:{percentage}")
     prepare_image_folder(output_dir, f'processed_train_{tokenizer}')
